@@ -1,5 +1,17 @@
-pika
 hashlib
-sockjs
-ecdsa
-tornado
+onetimepass
+
+# external repos
+git+https://github.com/g-p-g/python-ecdsa/
+
+# messaging
+pika
+
+# web
+tornado==3.2
+
+# websockets
+gevent-websocket==0.3.6
+sockjs-tornado
+websocket-client==0.11.0
+

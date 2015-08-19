@@ -1,6 +1,6 @@
 <html>
 <head>
-<script src="//cdn.jsdelivr.net/sockjs/1.0.0/sockjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.0.3/sockjs.min.js"></script>
 <script>
  var sock = new SockJS('http://127.0.0.1:8123');
  sock.onopen = function() {
@@ -12,9 +12,6 @@
  sock.onclose = function() {
      console.log('close');
  };
-
- sock.send('test');
- sock.close();
 </script>
 </head>
 <body>look in the JS console</body>
