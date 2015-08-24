@@ -48,3 +48,4 @@ def setupLogHandlers(fname, formatter=None, **kwargs):
         handlers += (gelf_handler, )
 
     return handlers
+

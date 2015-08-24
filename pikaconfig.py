@@ -26,3 +26,5 @@ url = "amqp://guest:guest@127.0.0.1:5672/%2F"  # %%2F is "/" encoded
 
 BROKER_URL = "%s?%s" % (url, urllib.urlencode(params))
 CLIENT_BROKER_URL = 'amqp://guest:guest@127.0.0.1:5672//'
+
+SCHEMAS = {'coin': {"description": "model for coin", "title": "CoinSA", "required": ["metal", "mint"], "routes": {"/:id": {"PUT": ["authenticate"], "DELETE": ["authenticate"], "GET": ["authenticate"]}, "/": {"POST": ["authenticate"], "GET": ["authenticate"]}}, "$schema": "http://json-schema.org/draft-04/schema#", "type": "object", "properties": {"metal": {"type": "string", "maxLength": 255}, "mint": {"type": "string", "maxLength": 255}}}}

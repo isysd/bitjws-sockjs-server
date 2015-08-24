@@ -2,11 +2,13 @@ import os
 import sys
 import json
 import logging
-from collections import defaultdict
-
 import pika
+import sqlalchemy as sa
+import sqlalchemy.orm as orm
 from pika import adapters
-
+from collections import defaultdict
+from flask_mrest.models import UserSA
+from mrest_auth.auth import verify_message
 from util import setupLogHandlers
 
 import pikaconfig
@@ -22,17 +24,18 @@ class AsyncConsumer(object):
     EXCHANGE = pikaconfig.EXCHANGE['exchange']
     EXCHANGE_TYPE = pikaconfig.EXCHANGE['exchange_type']
 
-    def __init__(self, amqp_url, ioloop_instance=None):
-        """Create a new instance of the consumer class, passing in the AMQP
-        URL used to connect to RabbitMQ.
+    def __init__(self, config, ioloop_instance=None):
+        """Create a new instance of the consumer class, passing in the config
+        with AMQP URL used to connect to RabbitMQ.
 
-        :param str amqp_url: The AMQP url to connect with
+        :param config:
         """
+        self.config = config
         self._connection = None
         self._channel = None
         self._closing = False
         self._consumer_tag = None
-        self._url = amqp_url
+        self._url = config.BROKER_URL
 
         # An exclusive queue will be automatically created for using
         # with the fanout exchange.
@@ -48,6 +51,24 @@ class AsyncConsumer(object):
         logger.setLevel(logging.DEBUG)
         logger.info("Consumer created")
         self._log = logger
+
+        sa_engine_url = 'sqlite:///:memory:'
+        if hasattr(config, 'SA_ENGINE_URL'):
+            sa_engine_url = config.SA_ENGINE_URL
+
+        self.sa = {'engine': sa.create_engine(sa_engine_url)}
+        usersa = UserSA
+        if hasattr(config, 'USER_SA'):
+            usersa = self.config.USER_SA
+        usersa.metadata.create_all(self.sa['engine'])
+        self.sa['session'] = orm.sessionmaker(bind=self.sa['engine'])()
+
+        cfgschemas = {}
+        self.schemas = {}
+        if hasattr(config, 'SCHEMAS'):
+            cfgschemas = config.SCHEMAS
+        for model in cfgschemas:
+            self.add_schema(model, cfgschemas[model])
 
     def connect(self):
         """
@@ -355,22 +376,8 @@ class AsyncConsumer(object):
             self._log.exception(e)
             return
 
-        mtype = msg['type']
-        if (mtype not in KNOWN_MESSAGE_TYPE and
-                msg.get('front_type', '') not in KNOWN_MESSAGE_FRONT_TYPE):
-            self._log.info('Unknown message, ignoring')
-            return
-
-        if 'front_type' in msg:
-            # The message type for the frontend is different from the one
-            # used to identify this message here.
-            msg['type'] = msg.pop('front_type')
-            body = json.dumps(msg)
-
         for listener, allowed in self._listener.iteritems():
-            if mtype in allowed:
-                # Pass the message.
-                listener.send(body)
+            listener.send(body)
 
     def listener_set(self, instance, val):
         if not isinstance(val, str):
@@ -383,15 +390,43 @@ class AsyncConsumer(object):
     def listener_remove(self, instance, disallowed=None):
         self._listener[instance].difference_update(disallowed or [])
 
-    def listener_allowed(self, instance, mtype):
-        return instance in self._listener and mtype in self._listener[instance]
+    def listener_allowed(self, instance, data):
+        if data['model'] not in self.schemas:
+            return False
+        elif 'id' in data:
+            if not 'GET' in self.schemas[data['model']]['routes']['/:id']:
+                return False
+            permissions = self.schemas[data['model']]['routes']['/:id']['GET']
+        else:
+            if not 'GET' in self.schemas[data['model']]['routes']['/']:
+                return False
+            permissions = self.schemas[data['model']]['routes']['/']['GET']
+
+        if 'pubhash' in permissions:
+            if 'headers' not in data or 'x-mrest-pubhash' not in data['headers']:
+                return False
+        elif 'authenticate' in permissions:
+            if 'headers' not in data or 'x-mrest-sign' not in data['headers'] or \
+                    'x-mrest-time' not in data['headers'] or \
+                    'x-mrest-pubhash' not in data['headers']:
+                return False
+            else:
+                # TODO check if user is authorized for item
+                #item = self.sa['session'].query(self.sa_model).all()
+                try:
+                    verify_message(data['data'], data['headers'], [data['headers']['x-mrest-pubhash']], signers=None, method=data['method'])
+                except Exception:
+                    return False
+        return instance in self._listener and data['method'] in self._listener[instance]
 
     def listener_delete(self, instance):
         self._listener.pop(instance, None)
 
+    def add_schema(self, model, schema):
+        self.schemas[model] = schema
 
 if __name__ == "__main__":
-    consumer = AsyncConsumer(pikaconfig.BROKER_URL)
+    consumer = AsyncConsumer(pikaconfig)
     consumer.setup()
     try:
         consumer.run()
