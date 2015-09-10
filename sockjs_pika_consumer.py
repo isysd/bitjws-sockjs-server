@@ -8,7 +8,8 @@ import sqlalchemy.orm as orm
 from pika import adapters
 from collections import defaultdict
 from flask_mrest.models import UserSA
-from mrest_auth.auth import verify_message
+from mrest_core.auth.message import verify_message
+from mrest_server.auth import AuthServerMixin
 from util import setupLogHandlers
 
 import pikaconfig
@@ -45,30 +46,14 @@ class AsyncConsumer(object):
         self._listener = defaultdict(set)
         self._ioloop_instance = ioloop_instance
 
+        self.mrest = AuthServerMixin(config)
+
         logger = logging.getLogger(name='api-stream_consumer')
         for h in setupLogHandlers(fname='API-stream_consumer.log'):
             logger.addHandler(h)
         logger.setLevel(logging.DEBUG)
         logger.info("Consumer created")
         self._log = logger
-
-        sa_engine_url = 'sqlite:///:memory:'
-        if hasattr(config, 'SA_ENGINE_URL'):
-            sa_engine_url = config.SA_ENGINE_URL
-
-        self.sa = {'engine': sa.create_engine(sa_engine_url)}
-        usersa = UserSA
-        if hasattr(config, 'USER_SA'):
-            usersa = self.config.USER_SA
-        usersa.metadata.create_all(self.sa['engine'])
-        self.sa['session'] = orm.sessionmaker(bind=self.sa['engine'])()
-
-        cfgschemas = {}
-        self.schemas = {}
-        if hasattr(config, 'SCHEMAS'):
-            cfgschemas = config.SCHEMAS
-        for model in cfgschemas:
-            self.add_schema(model, cfgschemas[model])
 
     def connect(self):
         """
@@ -364,8 +349,8 @@ class AsyncConsumer(object):
         :param str|unicode body: The message body
         """
         if basic_deliver and properties:
-            self._log.debug('Received message # %s from %s: %s' % (
-                basic_deliver.delivery_tag, properties.user_id, repr(body)))
+            self._log.debug('Received message # %s: %s' % (
+                basic_deliver.delivery_tag, repr(body)))
             self.acknowledge_message(basic_deliver.delivery_tag)
         else:
             self._log.debug('Received direct message: %r' % body)
@@ -375,9 +360,13 @@ class AsyncConsumer(object):
         except Exception, e:
             self._log.exception(e)
             return
-
+        self._log.info(self._listener)
         for listener, allowed in self._listener.iteritems():
-            listener.send(body)
+            self._log.info('iterating _listeners\t %s: %s' % (listener, allowed))
+            if msg['model'] in allowed or ('id' in msg and 
+                    "%s_id_%s" % (msg['model'], msg['id']) in allowed):
+                self._log.info('sending body\t %s' % body)
+                listener.send(body)
 
     def listener_set(self, instance, val):
         if not isinstance(val, str):
@@ -391,39 +380,41 @@ class AsyncConsumer(object):
         self._listener[instance].difference_update(disallowed or [])
 
     def listener_allowed(self, instance, data):
-        if data['model'] not in self.schemas:
+        self._log.info("allowed: %s" % data)
+        if data['model'] not in self.mrest.schemas:
             return False
         elif 'id' in data:
-            if not 'GET' in self.schemas[data['model']]['routes']['/:id']:
+            if not 'GET' in self.mrest.schemas[data['model']]['routes']['/:id']:
                 return False
-            permissions = self.schemas[data['model']]['routes']['/:id']['GET']
+            permissions = self.mrest.schemas[data['model']]['routes']['/:id']['GET']
         else:
-            if not 'GET' in self.schemas[data['model']]['routes']['/']:
+            if not 'GET' in self.mrest.schemas[data['model']]['routes']['/']:
                 return False
-            permissions = self.schemas[data['model']]['routes']['/']['GET']
-
+            permissions = self.mrest.schemas[data['model']]['routes']['/']['GET']
+        self._log.info("allowed permissions: %s" % permissions)
         if 'pubhash' in permissions:
-            if 'headers' not in data or 'x-mrest-pubhash' not in data['headers']:
+            if 'headers' not in data or 'x-mrest-pubhash-0' not in data['headers']:
                 return False
         elif 'authenticate' in permissions:
-            if 'headers' not in data or 'x-mrest-sign' not in data['headers'] or \
-                    'x-mrest-time' not in data['headers'] or \
-                    'x-mrest-pubhash' not in data['headers']:
+            if 'headers' not in data or 'x-mrest-sign-0' not in data['headers'] or \
+                    'x-mrest-time-0' not in data['headers'] or \
+                    'x-mrest-pubhash-0' not in data['headers']:
                 return False
             else:
+                self._log.info("allowed auth")
                 # TODO check if user is authorized for item
                 #item = self.sa['session'].query(self.sa_model).all()
+                senderlist = [data['headers']['x-mrest-pubhash-0']]
                 try:
-                    verify_message(data['data'], data['headers'], [data['headers']['x-mrest-pubhash']], signers=None, method=data['method'])
-                except Exception:
+                    verify_message(data['data'], data['headers'], senderlist, signers=senderlist, method=data['method'])
+                except Exception as e:
+                    print e
+                    self._log.info("allowed auth err %s" % e)
                     return False
-        return instance in self._listener and data['method'] in self._listener[instance]
+        return True
 
     def listener_delete(self, instance):
         self._listener.pop(instance, None)
-
-    def add_schema(self, model, schema):
-        self.schemas[model] = schema
 
 if __name__ == "__main__":
     consumer = AsyncConsumer(pikaconfig)

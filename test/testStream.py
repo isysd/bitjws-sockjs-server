@@ -9,14 +9,16 @@ import unittest
 import websocket
 from bitcoin.wallet import CKey, P2PKHBitcoinAddress
 from mrest_client.client import MRESTClient
-from mrest_auth.auth import prepare_mrest_message, pack_message
+from mrest_core.auth.message import prepare_mrest_message, encode_compact_signed_message, decode_signed_message
+from mrest_server.mqpublisher import MQClient
 
-# Prepend the directory with API clients to the sys path.
-CLIENT_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'client')
+
+# Prepend the parent directory to the sys path.
+CLIENT_DIR = ".."
 if CLIENT_DIR not in sys.path:
     sys.path.insert(0, CLIENT_DIR)
+
+import pikaconfig
 
 TEST_URL = os.environ.get('WSOCK_URL', 'ws://localhost:8123/websocket')
 newcoin = {'metal': 'UB', 'mint': 'Mars global'}
@@ -26,20 +28,22 @@ pubhash = str(P2PKHBitcoinAddress.from_pubkey(privkey.pub))
 keyring = [pubhash]
 
 mrestClient = MRESTClient({'url': 'http://0.0.0.0:8002',
-                           'privkey': privkey, 'keyring': keyring})
+                           'PRIV_KEY': privkey, 'KEYRING': keyring})
 mrestClient.update_server_info(accept_keys=True)
 mrestClient.post("user", {'pubhash': pubhash, 'username': pubhash[0:8]})
+
+mqclient = MQClient(pikaconfig)
 
 
 def client_wait_for(client, method, model=None, n=20):
     # Assume one of the next n messages will be the
     # one with the desired type on it.
-    print method
-    print model
+    # print method
+    # print model
     while n:
         n -= 1
         msg = client.recv()
-        print msg
+        # print msg
         data = json.loads(msg)
         if 'method' in data and data['method'] == method:
             if model is None:
@@ -55,6 +59,9 @@ class CommonTestMixin(object):
 
     def wait_for(self, mtype, n=20):
         return client_wait_for(self.client, mtype, n)
+
+    def tearDown(self):
+        self.client.close()
 
 
 class GoodClient(unittest.TestCase, CommonTestMixin):
@@ -81,18 +88,42 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
         self.assertIn('method', data)
         self.assertEqual(data['method'], 'pong')
 
-    def test_auth(self):
+    def test_get_coins(self):
         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
-        packedmess = pack_message('GET', data, headers)
-        packedmess['model'] = 'coin'
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
         self.client.send(json.dumps(packedmess))
+
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
+                                       headers={}, permissions=['authenticate'])
+        escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin')
+        mqclient.publish(escm)
         try:
             data = client_wait_for(self.client, 'RESPONSE', 'coin')
         except Exception, e:
-            print e
             self.fail("Unexpected error: %s" % e)
+        ddata = decode_signed_message(data)
+        self.assertEqual(ddata['metal'], mdata['metal'])
+        self.assertEqual(ddata['mint'], mdata['mint'])
 
-        self.assertEqual(data['method'], 'RESPONSE')
+    def test_get_coin_id(self):
+        headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=1337)
+        self.client.send(json.dumps(packedmess))
+
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
+                                       headers={}, permissions=['authenticate'])
+        escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin', itemid=1337)
+        mqclient.publish(escm)
+        try:
+            data = client_wait_for(self.client, 'RESPONSE', 'coin')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['id'], 1337)
+        ddata = decode_signed_message(data)
+        self.assertEqual(ddata['metal'], mdata['metal'])
+        self.assertEqual(ddata['mint'], mdata['mint'])
 
 
 class BadClient(unittest.TestCase, CommonTestMixin):
@@ -100,209 +131,141 @@ class BadClient(unittest.TestCase, CommonTestMixin):
     def setUp(self):
         super(BadClient, self).setup()
 
-    def test_missing_basic(self):
-        open_data = json.loads(self.client.recv())
+    def test_get_bad_format(self):
+        headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
+        del packedmess['method']
+        self.client.send(json.dumps(packedmess))
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['reason'], 'unknown message')
 
-        self.client.send(json.dumps({'type': 'auth'}))
-        data = self.wait_for('error')
-        if data is None:
-            self.fail('no error message received')
-        self.assertIn('reason', data)
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
+        del packedmess['model']
+        self.client.send(json.dumps(packedmess))
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['reason'], 'unknown message')
 
-        self.client.send(json.dumps({'token': open_data['token']}))
+    def test_get_coins_bad_sign(self):
+        headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
+        headers['x-mrest-sign-0'] = headers['x-mrest-sign-0'][0:-5]
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
+        self.client.send(json.dumps(packedmess))
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['reason'], 'bad credentials')
 
-    def test_invalid_token(self):
-        open_data = json.loads(self.client.recv())
-        token = open_data['token']
+    def test_subscribe_bad_id(self):
+        # create a new user to create his own coin
+        privkey2 = CKey(os.urandom(64))
+        pubhash2 = str(P2PKHBitcoinAddress.from_pubkey(privkey.pub))
+        keyring2 = [pubhash2]
 
-        for t in (token + 'x', token[:-1] + 'x', '', '0.123', 'x' * 200000):
-            self.client.send(json.dumps({'type': 'auth', 'token': t}))
-            data = self.wait_for('error')
-            if data is None:
-                self.fail('no error message received')
-            self.assertIn('reason', data)
+        mrestClient2 = MRESTClient({'url': 'http://0.0.0.0:8002',
+                                   'PRIV_KEY': privkey2, 'KEYRING': keyring2})
+        mrestClient2.update_server_info(accept_keys=True)
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        mrestClient2.post("user", {'pubhash': pubhash2, 'username': pubhash2[0:8]})
+    
+        # create a coin owned by the new user
+        coin = mrestClient2.post("coin", mdata)
 
-    def test_unknown_mtype(self):
-        open_data = json.loads(self.client.recv())
-        token = open_data['token']
+        # subscribe to the id with the original keys
+        headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=coin['id'])
+        self.client.send(json.dumps(packedmess))
 
-        # None of the following types are recognized by the current server.
-        for mtype in ('open', 'close', 'error', 'debug', 'info', 'admin', '', 'auth' * 100):
-            self.client.send(json.dumps({'type': mtype, 'token': token}))
-            data = self.wait_for('error')
-            if data is None:
-                self.fail('no error message received')
-            self.assertIn('reason', data)
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
+                                       headers={}, permissions=['authenticate'])
+        escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin', itemid=coin['id'])
+        mqclient.publish(escm)
 
-    def test_otp_wronginterval(self):
-        open_data = json.loads(self.client.recv())
-        token = open_data['token']
+        # publish pings to fill queue
+        for i in range(0,5):
+            self.client.send(json.dumps({'method': 'ping'}))
 
-        # Invalid interval for the protocol used.
-        for i in (60, 30, 1, 200, 2 ** 64 - 1):  # n >= 0 for '>Q' packing
-            digest = self.sign_token(open_data['auth_token'], interval=int(time.time()) / i)
-
-            data = {'type': 'auth', 'token': token, 'key': self.key, 'digest': digest}
-            self.client.send(json.dumps(data))
-
-            result = self.wait_for('auth')
-            if result is None:
-                self.fail('no auth message received for interval "%s"' % i)
-            self.assertIn('success', result)
-            self.assertEqual(result['success'], False)
-            self.assertIn('reason', result)
-            self.assertIsInstance(result['reason'], unicode)
-
-    def test_otp_outofsync(self):
-        open_data = json.loads(self.client.recv())
-        token = open_data['token']
-
-        # Assumption: this code is running in the same place where the
-        # websocket server, therefore the clock here is the same as the
-        # the clock in the websocket server.
-
-        # The following digests would be valid, but since we fake
-        # out of sync clocks they must fail. Note that the server
-        # accepts that tokens that are behind 1 interval, as well
-        # those that are 1 interval ahead.
-
-        for i in (-2, 2, 3, -3, 100, 500, -100, -500):
-            interval = int(time.time()) / (60 * 10)
-            digest = self.sign_token(open_data['auth_token'], interval=interval + i)
-
-            data = {'type': 'auth', 'token': token, 'key': self.key, 'digest': digest}
-            self.client.send(json.dumps(data))
-
-            result = self.wait_for('auth')
-            if result is None:
-                self.fail('no auth message received for interval "%s"' % interval)
-            self.assertIn('success', result)
-            self.assertEqual(result['success'], False)
-            self.assertIn('reason', result)
-            self.assertIsInstance(result['reason'], unicode)
-
-    def test_hijack_token(self):
-        # In this case, client A opens a connection and receives some token A.
-        # This token must be present in every message sent to the server.
-        tokenA = json.loads(self.client.recv())['token']
-
-        # Then a client B comes..
-        clientB = websocket.create_connection(TEST_URL)
-        #keysB = common.createCoinapultAccount(testnet=COINAPULT_TESTNET)[0]
-        open_data = json.loads(clientB.recv())
-        tokenB = open_data['token']
-        self.assertNotEqual(tokenA, tokenB)
-        # grabs token A
-        tokenB = tokenA
-        # and tries to make requests using that.
-        data = {'type': 'auth', 'key': keysB['key'],
-                'digest': sign_token_hmac(keysB['secret'], open_data['auth_token']),
-                'token': tokenB}
-        clientB.send(json.dumps(data))
-
-        # In this case, client B should never receive an auth message as
-        # the reply. It must fail before the server even decides to route
-        # the message.
-        result = client_wait_for(clientB, 'error')
-        if result is None:
-            self.fail('no error message received')
-        self.assertIn('reason', result)
-        self.assertIsInstance(result['reason'], unicode)
-
-    def test_hijack_authtoken(self):
-        # This situation is similar to the previous one, but now
-        # client B realized he can't use tokens from other connections.
-        # Now the focus is on trying to use auth_token.
-        authA = json.loads(self.client.recv())['auth_token']
-
-        clientB = websocket.create_connection(TEST_URL)
-        #keysB = common.createCoinapultAccount(testnet=COINAPULT_TESTNET)[0]
-        open_data = json.loads(clientB.recv())
-        authB = open_data['auth_token']
-        self.assertNotEqual(authA, authB)
-
-        # Client B grabs auth_token from client A
-        authB = authA
-        # and tries to auth using that.
-        data = {'type': 'auth', 'key': keysB['key'],
-                'digest': sign_token_hmac(keysB['secret'], authB),
-                'token': open_data['token']}
-        clientB.send(json.dumps(data))
-
-        # In this case everything is correct, but the authentication
-        # must not succeed as the auth token used was not given to
-        # this client.
-        result = client_wait_for(clientB, 'auth')
-        if result is None:
-            self.fail('no auth message received')
-        self.assertIn('reason', result)
-        self.assertEqual(result['success'], False)
+        try:
+            data = client_wait_for(self.client, 'RESPONSE', 'coin', 5)
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['id'], coin['id'])
+        ddata = decode_signed_message(data)
+        self.assertEqual(ddata['metal'], mdata['metal'])
+        self.assertEqual(ddata['mint'], mdata['mint'])
 
 
-class MessageLeak(unittest.TestCase, CommonTestMixin):
+class MessageLeak(unittest.TestCase):
     """
     This test checks whether unknown messages are leaked to the user.
     In effect this checks how the consumer handles this situation.
     """
 
-    def setUp(self):
-        super(MessageLeak, self).setup()
+    def test_connect_publish_coin(self):
+        ctm = CommonTestMixin()
+        ctm.setup()
+        client = ctm.client
+        # publish coin message which should not be received by client
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
+                                       headers={}, permissions=['authenticate'])
+        escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin')
+        mqclient.publish(escm)
 
-    def test_noleak_unauth(self):
-        data = json.loads(self.client.recv())
+        # publish pings to fill queue
+        for i in range(0,5):
+            client.send(json.dumps({'method': 'ping'}))
 
-        # 'ticker2' is unknown, therefore should never get to the user.
-        publisherDummy.publish('ticker2', {'index': 600})
-
-        self.client.settimeout(0.5)
         try:
-            data = self.wait_for('ticker2')
-        except socket.timeout:
-            # Good
-            pass
-        else:
-            if data is not None:
-                self.fail('ticker2 message received')
+            data = client_wait_for(client, 'RESPONSE', 'coin', 5)
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertIsNone(data)
+        client.close()
 
-    def test_noleak_auth(self):
-        data = json.loads(self.client.recv())
-        self.auth(data['token'], data['auth_token'])
+    def test_connect_publish_coin_id(self):
+        ctm = CommonTestMixin()
+        ctm.setup()
+        client = ctm.client
 
-        # 'transaction' messages should be discarded by the consumer.
-        # It is expected to describe them by user id.
-        publisherDummy.publish('transaction', {'blurb': 1})
-        self.client.settimeout(0.5)
+        # subscribe to a specific coin id
+        headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
+        packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=1337)
+        client.send(json.dumps(packedmess))
+
+        # publish coin message which should not be received by client
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
+                                       headers={}, permissions=['authenticate'])
+        escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin', itemid=1338)
+        mqclient.publish(escm)
+
+        # publish pings to fill queue
+        for i in range(0,5):
+            client.send(json.dumps({'method': 'ping'}))
+
         try:
-            data = self.wait_for('transaction')
-        except socket.timeout:
-            # Good
-            pass
-        else:
-            if data is not None:
-                self.fail('transaction message received')
+            data = client_wait_for(client, 'RESPONSE', 'coin', 5)
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertIsNone(data)
+        client.close()
 
 
 if __name__ == '__main__':
-    broken = False
-
-    if len(sys.argv) > 1:
-        TEST_REAL_TICKER = True
-
     test_suite = []
-    #for cls in (GoodClient, BadClient, MessageLeak):
-    #    test_suite.append(unittest.TestLoader().loadTestsFromTestCase(cls))
-    test_suite.append(unittest.TestLoader().loadTestsFromTestCase(GoodClient))
+    for cls in (GoodClient, BadClient, MessageLeak):
+        test_suite.append(unittest.TestLoader().loadTestsFromTestCase(cls))
+    #test_suite = [unittest.TestLoader().loadTestsFromTestCase(GoodClient)]
 
-    for i in range(1, 2):
-        if broken:
-            break
-        print 'running test #' + str(i)
+    for suite in test_suite:
+        time.sleep(0.1)
+        result = unittest.TextTestRunner(verbosity=2).run(suite)
 
-        for suite in test_suite:
-            time.sleep(0.1)
-            result = unittest.TextTestRunner(verbosity=2).run(suite)
-            if len(result.errors) > 0 or len(result.failures) > 0:
-                broken = True
-
-    if broken:
-        raise SystemExit(1)

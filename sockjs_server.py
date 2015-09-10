@@ -19,9 +19,6 @@ from sockjs_pika_consumer import AsyncConsumer
 import pikaconfig
 
 
-# Messages clients listen for after connecting.
-DEFAULT_MESSAGES = ['sockjsmq']
-
 ERR_UNKNOWN_MSG = json.dumps({'method': 'error', 'reason': 'unknown message'})
 ERR_INVALID_DATA = json.dumps({'method': 'error', 'reason': 'invalid data'})
 ERR_AUTH_FAILED = json.dumps({'method': 'error', 'reason': 'bad credentials'})
@@ -47,20 +44,32 @@ class Connection(SockJSConnection):
         try:
             data = json.loads(msg)
             if 'method' not in data:
-                raise Exception("Invalid format, 'method' is required")
+                self.logger.info("method not in data")
+                self.send(ERR_UNKNOWN_MSG)  # method is required
+                return
         except Exception, e:
             self.logger.exception(e)
             self.send(ERR_INVALID_DATA)
             return
-
+        self.logger.info(data)
         # Handle the incoming message based on the method specified.
         if data['method'] == 'GET':
             if 'model' not in data:
-                raise Exception("Invalid format, 'model' is required")
-            if not self.consumer.listener_allowed(self, data):
-                self.send(ERR_UNKNOWN_MSG)
-            # TODO handle id listener case
-            self.consumer.listener_add(self, data['model'])
+                self.logger.info("model not in data")
+                self.send(ERR_UNKNOWN_MSG)  # model is required
+                return
+            allowed = self.consumer.listener_allowed(self, data)
+            self.logger.info(allowed)
+            if not allowed:
+                self.logger.info("authentication failed")
+                self.send(ERR_AUTH_FAILED)
+                return
+            if 'id' in data:
+                lname = "%s_id_%s" % (data['model'], data['id'])
+            else:
+                lname = data['model']
+            self.logger.info('adding listener to %s' % lname)
+            self.consumer.listener_add(self, [lname])
         elif data['method'] == 'ping':
             self._handle_ping(data, received_at)
         else:
@@ -76,11 +85,10 @@ class Connection(SockJSConnection):
         self.user_id = None
         self.logger.info("%s (%s)" % (self, self.ip))
 
-        self.consumer.listener_add(self, DEFAULT_MESSAGES)
-
         self.send(json.dumps({
+            'method': 'open',
             'now': int(time.time()),
-            'schemas': self.schemas
+            'schemas': self.consumer.mrest.display_schemas
         }))
         
     def on_close(self):
