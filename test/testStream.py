@@ -48,12 +48,12 @@ def client_wait_for(client, method, model=None, n=20):
     while n:
         n -= 1
         msg = client.recv()
-        data = json.loads(msg)
-        if 'bitjws_jwt' in data:
+        try:
+            data = bitjws.validate_deserialize(msg)[1]
+        except Exception:
             try:
-                data = bitjws.validate_deserialize(data['bitjws_jwt'])[1]
-            except Exception, e:
-                print "Error: %s" % e
+                data = json.loads(msg)
+            except Exception:
                 return
         if 'method' in data and data['method'] == method:
             if model is None:
@@ -90,9 +90,8 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
         self.assertIn('now', data)
 
     def test_ping(self):
-        msg = {'bitjws_jwt': bitjws.sign_serialize(privkey, method='ping',
-                                                   iat=time.time())}
-        self.client.send(json.dumps(msg))
+        msg = bitjws.sign_serialize(privkey, method='ping', iat=time.time())
+        self.client.send(msg)
         try:
             data = client_wait_for(self.client, 'pong')
         except Exception, e:
@@ -102,75 +101,64 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
 
 
     def test_get_coins(self):
-        bitjws_jwt = bitjws.sign_serialize(privkey,
+        msg = bitjws.sign_serialize(privkey,
                                     method='GET',
                                     pubhash=pubhash,
                                     permissions=['authenticate'],
                                     headers=None,
                                     model='coin',
                                     iat=time.time())
-        msg = json.dumps({'bitjws_jwt': bitjws_jwt})
         self.client.send(msg)
 
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        bitjws_jwt = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                           data=mdata, pubhash=pubhash,
+        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
+                                           metal=mdata['metal'],
+                                           mint=mdata['mint'],
+                                           pubhash=pubhash,
                                            headers={},
                                            permissions=['authenticate'],
                                            model='coin')
-        msg = json.dumps({'bitjws_jwt': bitjws_jwt})
 
         pika_channel.basic_publish(body=msg,
                                    exchange=pikaconfig.EXCHANGE['exchange'],
                                    routing_key='')
 
         try:
-            data = client_wait_for(self.client, 'RESPONSE', 'coin')['data']
+            data = client_wait_for(self.client, 'RESPONSE', 'coin')
         except Exception, e:
             self.fail("Unexpected error: %s" % e)
         self.assertEqual(data['metal'], mdata['metal'])
         self.assertEqual(data['mint'], mdata['mint'])
 
     def test_get_coin_id(self):
-        bitjws_jwt = bitjws.sign_serialize(privkey, method='GET', data='',
+        msg = bitjws.sign_serialize(privkey, method='GET', data='',
                                            pubhash=pubhash,
                                            permissions=['authenticate'],
                                            headers=None, model='coin',
                                            id=1337, iat=time.time())
-        msg = json.dumps({'bitjws_jwt': bitjws_jwt})
         self.client.send(msg)
 
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        bitjws_jwt = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                           data=mdata, pubhash=pubhash,
+        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
+                                           metal=mdata['metal'],
+                                           mint=mdata['mint'], pubhash=pubhash,
                                            headers={},
                                            permissions=['authenticate'],
                                            model='coin', id=1337,
                                            iat=time.time())
 
-        msg = json.dumps({'bitjws_jwt': bitjws_jwt})
-
         pika_channel.basic_publish(body=msg,
                                    exchange=pikaconfig.EXCHANGE['exchange'],
                                    routing_key='')
-#         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
-#         packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=1337)
-#         self.client.send(json.dumps(packedmess))
-#
-#         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-#         heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
-#                                        headers={}, permissions=['authenticate'])
-#         escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin', itemid=1337)
-#         mqclient.publish(escm)
         try:
             data = client_wait_for(self.client, 'RESPONSE', 'coin')
         except Exception, e:
             self.fail("Unexpected error: %s" % e)
         self.assertEqual(data['id'], 1337)
-        self.assertEqual(data['data']['metal'], mdata['metal'])
-        self.assertEqual(data['data']['mint'], mdata['mint'])
-#
-#
+        self.assertEqual(data['metal'], mdata['metal'])
+        self.assertEqual(data['mint'], mdata['mint'])
+
+
 class BadClient(unittest.TestCase, CommonTestMixin):
 #
     def setUp(self):

@@ -352,15 +352,15 @@ class AsyncConsumer(object):
             self._log.debug('Received direct message: %r' % body)
 
         try:
-            msg = bitjws.validate_deserialize(json.loads(body)['bitjws_jwt'])[1]
+            payload = bitjws.validate_deserialize(body)[1]
         except Exception, e:
             self._log.exception(e)
             return
         self._log.info(self._listener)
         for listener, allowed in self._listener.iteritems():
             self._log.info('iterating _listeners\t %s: %s' % (listener, allowed))
-            if msg['model'] in allowed or ('id' in msg and
-                    "%s_id_%s" % (msg['model'], msg['id']) in allowed):
+            if payload['model'] in allowed or ('id' in payload and
+                    "%s_id_%s" % (payload['model'], payload['id']) in allowed):
                 self._log.info('sending body\t %s' % body)
                 listener.send(body)
 
@@ -378,10 +378,8 @@ class AsyncConsumer(object):
     def listener_allowed(self, instance, data):
         """Incomplete/Naive bitjws auth (being developed)"""
         self._log.info("allowed: %s" % data)
-        if 'bitjws_jwt' not in data:
-            return False
         try:
-            bitjws_validation = bitjws.validate_deserialize(data['bitjws_jwt'])
+            bitjws_validation = bitjws.validate_deserialize(data)
         except Exception as e:
             print e
             self._log.info("allowed auth err %s" % e)

@@ -43,9 +43,7 @@ class Connection(SockJSConnection):
         self.logger.info('%s @ %s' % (str(msg), received_at))
         # Check if the message received has at least the required fields.
         try:
-            data = json.loads(msg)
-            bitjws_jwt = data['bitjws_jwt']
-            header, payload = bitjws.validate_deserialize(bitjws_jwt)
+            payload = bitjws.validate_deserialize(msg)[1]
             if 'method' not in payload:
                 self.logger.info("method not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # method is required
@@ -61,7 +59,7 @@ class Connection(SockJSConnection):
                 self.logger.info("model not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # model is required
                 return
-            allowed = self.consumer.listener_allowed(self, data)
+            allowed = self.consumer.listener_allowed(self, msg)
             self.logger.info(allowed)
             if not allowed:
                 self.logger.info("authentication failed")
