@@ -10,6 +10,7 @@ from binascii import hexlify
 from functools import partial
 from util import setupLogHandlers
 
+import bitjws
 import ecdsa
 import onetimepass
 from tornado import web, ioloop
@@ -43,19 +44,21 @@ class Connection(SockJSConnection):
         # Check if the message received has at least the required fields.
         try:
             data = json.loads(msg)
-            if 'method' not in data:
-                self.logger.info("method not in data")
+            bitjws_jwt = data['bitjws_jwt']
+            header, payload = bitjws.validate_deserialize(bitjws_jwt)
+            if 'method' not in payload:
+                self.logger.info("method not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # method is required
                 return
         except Exception, e:
             self.logger.exception(e)
             self.send(ERR_INVALID_DATA)
             return
-        self.logger.info(data)
+        self.logger.info(payload)
         # Handle the incoming message based on the method specified.
-        if data['method'] == 'GET':
-            if 'model' not in data:
-                self.logger.info("model not in data")
+        if payload['method'] == 'GET':
+            if 'model' not in payload:
+                self.logger.info("model not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # model is required
                 return
             allowed = self.consumer.listener_allowed(self, data)
@@ -64,17 +67,17 @@ class Connection(SockJSConnection):
                 self.logger.info("authentication failed")
                 self.send(ERR_AUTH_FAILED)
                 return
-            if 'id' in data:
-                lname = "%s_id_%s" % (data['model'], data['id'])
+            if 'id' in payload:
+                lname = "%s_id_%s" % (payload['model'], payload['id'])
             else:
-                lname = data['model']
+                lname = payload['model']
             self.logger.info('adding listener to %s' % lname)
             self.consumer.listener_add(self, [lname])
-        elif data['method'] == 'ping':
-            self._handle_ping(data, received_at)
+        elif payload['method'] == 'ping':
+            self._handle_ping(payload, received_at)
         else:
             self.logger.info('unknown message: "%s" @ %s' % (
-                data['method'], received_at))
+                payload['method'], received_at))
             self.send(ERR_UNKNOWN_MSG)
 
     def on_open(self, info):
@@ -88,12 +91,12 @@ class Connection(SockJSConnection):
         self.send(json.dumps({
             'method': 'open',
             'now': int(time.time()),
-            'schemas': self.consumer.mrest.display_schemas
+            # 'schemas': self.consumer.mrest.display_schemas
         }))
-        
+
     def on_close(self):
         self.logger.info("close %s" % self)
-        self.consumer.listener_delete(self) 
+        self.consumer.listener_delete(self)
 
     def _handle_ping(self, data, received_at):
         """Process a "ping" message.
