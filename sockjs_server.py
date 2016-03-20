@@ -89,7 +89,7 @@ class Connection(SockJSConnection):
         self.send(json.dumps({
             'method': 'open',
             'now': int(time.time()),
-            # 'schemas': self.consumer.mrest.display_schemas
+            'schemas': pikaconfig.SCHEMAS
         }))
 
     def on_close(self):
