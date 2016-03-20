@@ -29,7 +29,7 @@ TOTP_TIMEOUT = 60 * 10  # 10 minutes
 
 
 class Connection(SockJSConnection):
-    schemas = {}
+    schemas = pikaconfig.SCHEMAS
 
     def on_message(self, msg):
         if len(str(msg)) > 1024:
@@ -89,7 +89,7 @@ class Connection(SockJSConnection):
         self.send(json.dumps({
             'method': 'open',
             'now': int(time.time()),
-            'schemas': pikaconfig.SCHEMAS
+            'schemas': self.schemas
         }))
 
     def on_close(self):
