@@ -160,30 +160,34 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
 
 
 class BadClient(unittest.TestCase, CommonTestMixin):
-#
+
     def setUp(self):
         super(BadClient, self).setup()
-#
-#     def test_get_bad_format(self):
-#         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
-#         packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
-#         del packedmess['method']
-#         self.client.send(json.dumps(packedmess))
-#         try:
-#             data = client_wait_for(self.client, 'error')
-#         except Exception, e:
-#             self.fail("Unexpected error: %s" % e)
-#         self.assertEqual(data['reason'], 'unknown message')
-#
-#         packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
-#         del packedmess['model']
-#         self.client.send(json.dumps(packedmess))
-#         try:
-#             data = client_wait_for(self.client, 'error')
-#         except Exception, e:
-#             self.fail("Unexpected error: %s" % e)
-#         self.assertEqual(data['reason'], 'unknown message')
-#
+
+    def test_get_bad_format(self):
+        msg = bitjws.sign_serialize(privkey, data='', # no method
+                                    pubhash=pubhash, headers=None,
+                                    permissions=['authenticate'], model='coin',
+                                    iat=time.time())
+        self.client.send(msg)
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['reason'], 'unknown message')
+
+        msg = bitjws.sign_serialize(privkey, data='', method='GET',
+                                    pubhash=pubhash, headers=None,
+                                    permissions=['authenticate'], # no model
+                                    iat=time.time())
+        self.client.send(msg)
+
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertEqual(data['reason'], 'unknown message')
+
 #     def test_get_coins_bad_sign(self):
 #         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
 #         headers['x-mrest-sign-0'] = headers['x-mrest-sign-0'][0:-5]
@@ -233,68 +237,80 @@ class BadClient(unittest.TestCase, CommonTestMixin):
 #         ddata = decode_signed_message(data)
 #         self.assertEqual(ddata['metal'], mdata['metal'])
 #         self.assertEqual(ddata['mint'], mdata['mint'])
-#
-#
+
+
 class MessageLeak(unittest.TestCase):
     """
-#     This test checks whether unknown messages are leaked to the user.
-#     In effect this checks how the consumer handles this situation.
-#     """
-#
-#     def test_connect_publish_coin(self):
-#         ctm = CommonTestMixin()
-#         ctm.setup()
-#         client = ctm.client
-#         # publish coin message which should not be received by client
-#         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-#         heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
-#                                        headers={}, permissions=['authenticate'])
-#         escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin')
-#         mqclient.publish(escm)
-#
-#         # publish pings to fill queue
-#         for i in range(0,5):
-#             client.send(json.dumps({'method': 'ping'}))
-#
-#         try:
-#             data = client_wait_for(client, 'RESPONSE', 'coin', 5)
-#         except Exception, e:
-#             self.fail("Unexpected error: %s" % e)
-#         self.assertIsNone(data)
-#         client.close()
-#
-#     def test_connect_publish_coin_id(self):
-#         ctm = CommonTestMixin()
-#         ctm.setup()
-#         client = ctm.client
-#
-#         # subscribe to a specific coin id
-#         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
-#         packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=1337)
-#         client.send(json.dumps(packedmess))
-#
-#         # publish coin message which should not be received by client
-#         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-#         heads, pmdata = prepare_mrest_message('RESPONSE', data=mdata, pubhash=pubhash, privkey=privkey,
-#                                        headers={}, permissions=['authenticate'])
-#         escm = encode_compact_signed_message('RESPONSE', pmdata, heads, 'coin', itemid=1338)
-#         mqclient.publish(escm)
-#
-#         # publish pings to fill queue
-#         for i in range(0,5):
-#             client.send(json.dumps({'method': 'ping'}))
-#
-#         try:
-#             data = client_wait_for(client, 'RESPONSE', 'coin', 5)
-#         except Exception, e:
-#             self.fail("Unexpected error: %s" % e)
-#         self.assertIsNone(data)
-#         client.close()
-#
-#
+    This test checks whether unknown messages are leaked to the user.
+    In effect this checks how the consumer handles this situation.
+    """
+
+    def test_connect_publish_coin(self):
+        ctm = CommonTestMixin()
+        ctm.setup()
+        client = ctm.client
+        # publish coin message which should not be received by client
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
+                                    metal=mdata['metal'], mint=mdata['mint'],
+                                    pubhash=pubhash, headers={}, model='coin',
+                                    permissions=['authenticate'])
+
+        pika_channel.basic_publish(body=msg,
+                                   exchange=pikaconfig.EXCHANGE['exchange'],
+                                   routing_key='')
+
+        # publish pings to fill queue
+        ping_msg = bitjws.sign_serialize(privkey, method='ping')
+        for i in range(5):
+            client.send(ping_msg)
+
+        try:
+            data = client_wait_for(client, 'RESPONSE', 'coin', 5)
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertIsNone(data)
+        client.close()
+
+    def test_connect_publish_coin_id(self):
+        ctm = CommonTestMixin()
+        ctm.setup()
+        client = ctm.client
+
+        # subscribe to a specific coin id
+        msg = bitjws.sign_serialize(privkey, method='GET', data='',
+                                    pubhash=pubhash, headers=None, model='coin',
+                                    permissions=['authenticate'])
+
+        client.send(msg)
+
+        # publish coin message which should not be received by client
+        mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
+        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
+                                    metal=mdata['metal'], mint=mdata['mint'],
+                                    pubhash=pubhash, headers={}, model='coin',
+                                    permissions=['authenticate'])
+
+        pika_channel.basic_publish(body=msg,
+                                  exchange=pikaconfig.EXCHANGE['exchange'],
+                                  routing_key='')
+
+        # publish pings to fill queue
+        ping_msg = bitjws.sign_serialize(privkey, method='ping')
+        for i in range(5):
+            client.send(ping_msg)
+
+        try:
+            data = client_wait_for(client, 'RESPONSE', 'coin', 5)
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+        self.assertIsNone(data)
+        client.close()
+
+
 if __name__ == '__main__':
     test_suite = []
-    for cls in (GoodClient, BadClient, MessageLeak):
+    for cls in (GoodClient, MessageLeak):
         test_suite.append(unittest.TestLoader().loadTestsFromTestCase(cls))
     #test_suite = [unittest.TestLoader().loadTestsFromTestCase(GoodClient)]
 
