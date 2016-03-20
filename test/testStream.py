@@ -310,7 +310,7 @@ class MessageLeak(unittest.TestCase):
 
 if __name__ == '__main__':
     test_suite = []
-    for cls in (GoodClient, MessageLeak):
+    for cls in (GoodClient, BadClient, MessageLeak):
         test_suite.append(unittest.TestLoader().loadTestsFromTestCase(cls))
     #test_suite = [unittest.TestLoader().loadTestsFromTestCase(GoodClient)]
 
