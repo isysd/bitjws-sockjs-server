@@ -2,9 +2,6 @@ import os
 import sys
 import json
 import time
-# import hmac
-# import socket
-# import hashlib
 import unittest
 import websocket
 import bitjws
@@ -37,7 +34,8 @@ except:
     print "Could not connet to BitJWS server... Continuing without it."
     pass
 
-pika_client = pika.BlockingConnection(pika.URLParameters(pikaconfig.BROKER_URL))
+pika_url_parameters = pika.URLParameters(pikaconfig.BROKER_URL)
+pika_client = pika.BlockingConnection(pika_url_parameters)
 pika_channel = pika_client.channel()
 pika_channel.exchange_declare(**pikaconfig.EXCHANGE)
 
@@ -101,7 +99,6 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
         self.assertIn('method', data)
         self.assertEqual(data['method'], 'pong')
 
-
     def test_get_coins(self):
         msg = bitjws.sign_serialize(privkey,
                                     method='GET',
@@ -113,13 +110,14 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
         self.client.send(msg)
 
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                           metal=mdata['metal'],
-                                           mint=mdata['mint'],
-                                           pubhash=pubhash,
-                                           headers={},
-                                           permissions=['authenticate'],
-                                           model='coin')
+        msg = bitjws.sign_serialize(privkey,
+                                    method='RESPONSE',
+                                    metal=mdata['metal'],
+                                    mint=mdata['mint'],
+                                    pubhash=pubhash,
+                                    headers={},
+                                    permissions=['authenticate'],
+                                    model='coin')
 
         pika_channel.basic_publish(body=msg,
                                    exchange=pikaconfig.EXCHANGE['exchange'],
@@ -133,21 +131,28 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
         self.assertEqual(data['mint'], mdata['mint'])
 
     def test_get_coin_id(self):
-        msg = bitjws.sign_serialize(privkey, method='GET', data='',
-                                           pubhash=pubhash,
-                                           permissions=['authenticate'],
-                                           headers=None, model='coin',
-                                           id=1337, iat=time.time())
+        msg = bitjws.sign_serialize(privkey,
+                                    method='GET',
+                                    data='',
+                                    pubhash=pubhash,
+                                    permissions=['authenticate'],
+                                    headers=None,
+                                    model='coin',
+                                    id=1337,
+                                    iat=time.time())
+
         self.client.send(msg)
 
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                           metal=mdata['metal'],
-                                           mint=mdata['mint'], pubhash=pubhash,
-                                           headers={},
-                                           permissions=['authenticate'],
-                                           model='coin', id=1337,
-                                           iat=time.time())
+        msg = bitjws.sign_serialize(privkey,
+                                    method='RESPONSE',
+                                    metal=mdata['metal'],
+                                    mint=mdata['mint'],
+                                    pubhash=pubhash,
+                                    headers={},
+                                    permissions=['authenticate'],
+                                    model='coin', id=1337,
+                                    iat=time.time())
 
         pika_channel.basic_publish(body=msg,
                                    exchange=pikaconfig.EXCHANGE['exchange'],
@@ -167,9 +172,12 @@ class BadClient(unittest.TestCase, CommonTestMixin):
         super(BadClient, self).setup()
 
     def test_get_bad_format(self):
-        msg = bitjws.sign_serialize(privkey, data='', # no method
-                                    pubhash=pubhash, headers=None,
-                                    permissions=['authenticate'], model='coin',
+        msg = bitjws.sign_serialize(privkey,
+                                    data='',  # no method
+                                    pubhash=pubhash,
+                                    headers=None,
+                                    permissions=['authenticate'],
+                                    model='coin',
                                     iat=time.time())
         self.client.send(msg)
         try:
@@ -178,9 +186,11 @@ class BadClient(unittest.TestCase, CommonTestMixin):
             self.fail("Unexpected error: %s" % e)
         self.assertEqual(data['reason'], 'unknown message')
 
-        msg = bitjws.sign_serialize(privkey, data='', method='GET',
-                                    pubhash=pubhash, headers=None,
-                                    permissions=['authenticate'], # no model
+        msg = bitjws.sign_serialize(privkey, data='',
+                                    method='GET',
+                                    pubhash=pubhash,
+                                    headers=None,
+                                    permissions=['authenticate'],  # no model
                                     iat=time.time())
         self.client.send(msg)
 
@@ -192,12 +202,22 @@ class BadClient(unittest.TestCase, CommonTestMixin):
 
     def test_get_coins_bad_sign(self):
         privkey2 = bitjws.PrivateKey()
-        msg = bitjws.sign_serialize(privkey, method='GET', data='',
-                                    pubhash=pubhash, headers=None,
-                                    permissions=['authenticate'], model='coin')
-        msg2 = bitjws.sign_serialize(privkey2, method='GET', data='',
-                                     pubhash=pubhash, headers=None,
-                                     permissions=['authenticate'], model='coin')
+        msg = bitjws.sign_serialize(privkey,
+                                    method='GET',
+                                    data='',
+                                    pubhash=pubhash,
+                                    headers=None,
+                                    permissions=['authenticate'],
+                                    model='coin')
+
+        msg2 = bitjws.sign_serialize(privkey2,
+                                     method='GET',
+                                     data='',
+                                     pubhash=pubhash,
+                                     headers=None,
+                                     permissions=['authenticate'],
+                                     model='coin')
+
         signature2 = msg2.split('.')[2]
         bad_signed_msg = '.'.join(msg.split('.')[0:2]) + '.' + signature2
 
@@ -221,26 +241,34 @@ class BadClient(unittest.TestCase, CommonTestMixin):
         bitjws_client2 = BitJWSSwaggerClient.from_url(specurl)
         username2 = str(pubhash2)[0:8]
         luser2 = bitjws_client2.get_model('User')(username=username2)
-        user2 = bitjws_client2.user.addUser(user=luser2).result()
+        bitjws_client2.user.addUser(user=luser2).result()
 
         # create a coin owned by the new user
         lcoin = bitjws_client2.get_model('Coin')(metal='testinium',
-                                                  mint='testStream.py')
+                                                 mint='testStream.py')
         coin = bitjws_client2.coin.addCoin(coin=lcoin).result()
 
         # subscribe to the id with the original keys
-        msg = bitjws.sign_serialize(privkey, method='GET', data='',
-                                    pubhash=pubhash, headers=None,
-                                    permissions=['authenticate'], model='coin',
+        msg = bitjws.sign_serialize(privkey,
+                                    method='GET',
+                                    data='',
+                                    pubhash=pubhash,
+                                    headers=None,
+                                    permissions=['authenticate'],
+                                    model='coin',
                                     id=coin.id)
 
         self.client.send(msg)
 
-        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                     pubhash=pubhash, headers={},
-                                     metal='testinium', mint='testStream.py',
-                                     permissions=['authenticate'], model='coin',
-                                     id=coin.id)
+        msg = bitjws.sign_serialize(privkey,
+                                    method='RESPONSE',
+                                    pubhash=pubhash,
+                                    headers={},
+                                    metal='testinium',
+                                    mint='testStream.py',
+                                    permissions=['authenticate'],
+                                    model='coin',
+                                    id=coin.id)
 
         pika_channel.basic_publish(body=msg,
                                    exchange=pikaconfig.EXCHANGE['exchange'],
@@ -259,6 +287,7 @@ class BadClient(unittest.TestCase, CommonTestMixin):
         self.assertEqual(data['metal'], 'testinium')
         self.assertEqual(data['mint'], 'testStream.py')
 
+
 class MessageLeak(unittest.TestCase):
     """
     This test checks whether unknown messages are leaked to the user.
@@ -271,9 +300,13 @@ class MessageLeak(unittest.TestCase):
         client = ctm.client
         # publish coin message which should not be received by client
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                    metal=mdata['metal'], mint=mdata['mint'],
-                                    pubhash=pubhash, headers={}, model='coin',
+        msg = bitjws.sign_serialize(privkey,
+                                    method='RESPONSE',
+                                    metal=mdata['metal'],
+                                    mint=mdata['mint'],
+                                    pubhash=pubhash,
+                                    headers={},
+                                    model='coin',
                                     permissions=['authenticate'])
 
         pika_channel.basic_publish(body=msg,
@@ -298,22 +331,32 @@ class MessageLeak(unittest.TestCase):
         client = ctm.client
 
         # subscribe to a specific coin id
-        msg = bitjws.sign_serialize(privkey, method='GET', data='',
-                                    pubhash=pubhash, headers=None, model='coin',
-                                    permissions=['authenticate'], id=1337)
+        msg = bitjws.sign_serialize(privkey,
+                                    method='GET',
+                                    data='',
+                                    pubhash=pubhash,
+                                    headers=None,
+                                    model='coin',
+                                    permissions=['authenticate'],
+                                    id=1337)
 
         client.send(msg)
 
         # publish coin message which should not be received by client
         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-        msg = bitjws.sign_serialize(privkey, method='RESPONSE',
-                                    metal=mdata['metal'], mint=mdata['mint'],
-                                    pubhash=pubhash, headers={}, model='coin',
-                                    permissions=['authenticate'], id=1338)
+        msg = bitjws.sign_serialize(privkey,
+                                    method='RESPONSE',
+                                    metal=mdata['metal'],
+                                    mint=mdata['mint'],
+                                    pubhash=pubhash,
+                                    headers={},
+                                    model='coin',
+                                    permissions=['authenticate'],
+                                    id=1338)
 
         pika_channel.basic_publish(body=msg,
-                                  exchange=pikaconfig.EXCHANGE['exchange'],
-                                  routing_key='')
+                                   exchange=pikaconfig.EXCHANGE['exchange'],
+                                   routing_key='')
 
         # publish pings to fill queue
         ping_msg = bitjws.sign_serialize(privkey, method='ping')
@@ -332,9 +375,8 @@ if __name__ == '__main__':
     test_suite = []
     for cls in (GoodClient, BadClient, MessageLeak):
         test_suite.append(unittest.TestLoader().loadTestsFromTestCase(cls))
-    #test_suite = [unittest.TestLoader().loadTestsFromTestCase(GoodClient)]
+    # test_suite = [unittest.TestLoader().loadTestsFromTestCase(GoodClient)]
 
     for suite in test_suite:
         time.sleep(0.1)
         result = unittest.TextTestRunner(verbosity=2).run(suite)
-
