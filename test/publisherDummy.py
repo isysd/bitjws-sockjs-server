@@ -19,7 +19,7 @@ pikaChannel.exchange_declare(**pikaconfig.EXCHANGE)
 
 def publish(message):
     """
-    :param message: a compact signed mrest message
+    :param message: a bitjws jwt message
     """
     pikaChannel.basic_publish(body=message,
                               exchange=pikaconfig.EXCHANGE['exchange'],
