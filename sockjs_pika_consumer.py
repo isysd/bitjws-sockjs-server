@@ -44,6 +44,8 @@ class AsyncConsumer(object):
         self._listener = defaultdict(set)
         self._ioloop_instance = ioloop_instance
 
+        self.schemas = config.SCHEMAS
+
         logger = logging.getLogger(name='api-stream_consumer')
         for h in setupLogHandlers(fname='API-stream_consumer.log'):
             logger.addHandler(h)
@@ -379,44 +381,32 @@ class AsyncConsumer(object):
         """Incomplete/Naive bitjws auth (being developed)"""
         self._log.info("allowed: %s" % data)
         try:
-            bitjws_validation = bitjws.validate_deserialize(data)
+            headers, payload = bitjws.validate_deserialize(data)
         except Exception as e:
             print e
-            self._log.info("allowed auth err %s" % e)
+            try:
+                headers, payload = bitjws.multisig_validate_deserialize(data)
+            except Exception as e:
+                print e
+                self._log.info("allowed auth err %s" % e)
+                return False
+        if payload['model'] not in self.schemas:
             return False
+        elif 'id' in payload:
+            if not 'GET' in self.schemas[payload['model']]['routes']['/:id']:
+                return False
+            permissions = self.schemas[payload['model']]['routes']['/:id']['GET']
+        else:
+            if not 'GET' in self.schemas[payload['model']]['routes']['/']:
+                return False
+            permissions = self.schemas[payload['model']]['routes']['/']['GET']
+        self._log.info("allowed permissions: %s" % permissions)
+        if 'pubhash' in permissions:
+            if 'pubhash' not in payload:
+                return False
         return True
-        # self._log.info("allowed: %s" % data)
-        # if data['model'] not in self.mrest.schemas:
-        #     return False
-        # elif 'id' in data:
-        #     if not 'GET' in self.mrest.schemas[data['model']]['routes']['/:id']:
-        #         return False
-        #     permissions = self.mrest.schemas[data['model']]['routes']['/:id']['GET']
-        # else:
-        #     if not 'GET' in self.mrest.schemas[data['model']]['routes']['/']:
-        #         return False
-        #     permissions = self.mrest.schemas[data['model']]['routes']['/']['GET']
-        # self._log.info("allowed permissions: %s" % permissions)
-        # if 'pubhash' in permissions:
-        #     if 'headers' not in data or 'x-mrest-pubhash-0' not in data['headers']:
-        #         return False
-        # elif 'authenticate' in permissions:
-        #     if 'headers' not in data or 'x-mrest-sign-0' not in data['headers'] or \
-        #             'x-mrest-time-0' not in data['headers'] or \
-        #             'x-mrest-pubhash-0' not in data['headers']:
-        #         return False
-        #     else:
-        #         self._log.info("allowed auth")
-        #         # TODO check if user is authorized for item
-        #         #item = self.sa['session'].query(self.sa_model).all()
-        #         senderlist = [data['headers']['x-mrest-pubhash-0']]
-        #         try:
-        #             verify_message(data['data'], data['headers'], senderlist, signers=senderlist, method=data['method'])
-        #         except Exception as e:
-        #             print e
-        #             self._log.info("allowed auth err %s" % e)
-        #             return False
-        # return True
+        # TODO check if user is authorized for item
+        #item = self.sa['session'].query(self.sa_model).all()
 
     def listener_delete(self, instance):
         self._listener.pop(instance, None)

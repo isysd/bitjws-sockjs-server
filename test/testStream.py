@@ -8,8 +8,7 @@ import time
 import unittest
 import websocket
 import bitjws
-# from bravado_bitjws.client import BitJWSSwaggerClient
-# from mrest_core.auth.message import prepare_mrest_message, encode_compact_signed_message, decode_signed_message
+from bravado_bitjws.client import BitJWSSwaggerClient
 import pika
 
 
@@ -26,14 +25,17 @@ newcoin = {'metal': 'UB', 'mint': 'Mars global'}
 privkey = bitjws.PrivateKey()
 pubhash = bitjws.pubkey_to_addr(privkey.pubkey.serialize())
 
-# url = 'http://0.0.0.0:8002/'
-# specurl = '%sstatic/swagger.json' % url
+url = 'http://0.0.0.0:8002/'
+specurl = '%sstatic/swagger.json' % url
 
-# bitjws_client = BitJWSSwaggerClient.from_url(specurl, privkey=privkey)
-
-# username = str(pubhash)[0:8]
-# luser = bitjws_client.get_model('User')(username=username)
-# bitjws_client.user.addUser(user=luser)
+try:
+    bitjws_client = BitJWSSwaggerClient.from_url(specurl, privkey=privkey)
+    username = str(pubhash)[0:8]
+    luser = bitjws_client.get_model('User')(username=username)
+    bitjws_client.user.addUser(user=luser)
+except:
+    bitjws_client = None
+    print "Could not connet to BitJWS server... Continuing without it."
 
 pika_client = pika.BlockingConnection(pika.URLParameters(pikaconfig.BROKER_URL))
 pika_channel = pika_client.channel()
@@ -188,32 +190,80 @@ class BadClient(unittest.TestCase, CommonTestMixin):
             self.fail("Unexpected error: %s" % e)
         self.assertEqual(data['reason'], 'unknown message')
 
-#     def test_get_coins_bad_sign(self):
-#         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
-#         headers['x-mrest-sign-0'] = headers['x-mrest-sign-0'][0:-5]
-#         packedmess = encode_compact_signed_message('GET', data, headers, 'coin')
-#         self.client.send(json.dumps(packedmess))
-#         try:
-#             data = client_wait_for(self.client, 'error')
-#         except Exception, e:
-#             self.fail("Unexpected error: %s" % e)
-#         self.assertEqual(data['reason'], 'bad credentials')
-#
-#     def test_subscribe_bad_id(self):
-#         # create a new user to create his own coin
-#         privkey2 = CKey(os.urandom(64))
-#         pubhash2 = str(P2PKHBitcoinAddress.from_pubkey(privkey.pub))
-#         keyring2 = [pubhash2]
-#
-#         mrestClient2 = MRESTClient({'url': 'http://0.0.0.0:8002',
-#                                    'PRIV_KEY': privkey2, 'KEYRING': keyring2})
-#         mrestClient2.update_server_info(accept_keys=True)
-#         mdata = {'metal': 'testinium', 'mint': 'testStream.py'}
-#         mrestClient2.post("user", {'pubhash': pubhash2, 'username': pubhash2[0:8]})
-#
-#         # create a coin owned by the new user
-#         coin = mrestClient2.post("coin", mdata)
-#
+    def test_get_coins_bad_sign(self):
+        privkey2 = bitjws.PrivateKey()
+        msg = bitjws.sign_serialize(privkey, method='GET', data='',
+                                    pubhash=pubhash, headers=None,
+                                    permissions=['authenticate'], model='coin')
+        msg2 = bitjws.sign_serialize(privkey2, method='GET', data='',
+                                     pubhash=pubhash, headers=None,
+                                     permissions=['authenticate'], model='coin')
+        signature2 = msg2.split('.')[2]
+        bad_signed_msg = '.'.join(msg.split('.')[0:2]) + '.' + signature2
+
+        self.client.send(bad_signed_msg)
+
+        try:
+            data = client_wait_for(self.client, 'error')
+        except Exception, e:
+            self.fail("Unexpected error: %s" % e)
+
+        # returning 'invalid data' for now on bad signature; maybe returning
+        # 'bad credentials' again in the future.
+        self.assertEqual(data['reason'], 'invalid data')
+
+    # def test_subscribe_bad_id(self):
+    #     if bitjws_client is None:
+    #         return
+    #     # create a new user to create his own coin
+    #     privkey2 = bitjws.PrivateKey()
+    #     pubhash2 = bitjws.pubkey_to_addr(privkey2.pubkey.serialize())
+    #     bitjws_client2 = BitJWSSwaggerClient.from_url(specurl, privkey=privkey2)
+    #     username2 = str(pubhash2)[0:8]
+    #     luser2 = bitjws_client2.get_model('User')(username=username2)
+    #     bitjws_client2.user.addUser(user=luser2)
+    #
+    #     # create coin owned by user
+    #     # lcoin = bitjws_client.get_model('Coin')(metal='testinium',
+    #                                             # mint='testStream.py')
+    #     # coin = bitjws_client.coin.addCoin(coin=lcoin).result()
+    #     lcoin = bitjws_client2.get_model('Coin')(metal='testinium', mint='testStream.py')
+    #     coin = bitjws_client2.coin.addCoin(coin=lcoin).result()
+    #
+    #     # create a coin owned by the new user
+    #     # lcoin2 = bitjws_client2.get_model('Coin')(metal='testinium',
+    #                                               # mint='testStream.py')
+    #     # coin2 = bitjws_client2.coin.addCoin(coin=lcoin2).result()
+    #
+    #     # subscribe to the id with the original keys
+    #     msg = bitjws.sign_serialize(privkey, method='GET', data='',
+    #                                 pubhash=pubhash, headers=None,
+    #                                 permissions=['authenticate'], model='coin',
+    #                                 id='')
+    #
+    #     self.client.send(msg)
+    #
+    #     msg2 = bitjws.sign_serialize(privkey, method='RESPONSE',
+    #                                  pubhash=pubhash, headers={},
+    #                                  metal='testinium', mint='testStream.py',
+    #                                  permissions=['authenticate'], model='coin',
+    #                                  id='')
+    #
+    #     pika_channel.basic_publish(body=msg,
+    #                                exchange=pikaconfig.EXCHANGE['exchange'],
+    #                                routing_key='')
+    #
+    #     for i in range(5):
+    #         self.client.send(json.dumps({'method': 'ping'}))
+    #
+    #     try:
+    #         data = client_wait_for(self.client, 'RESPONSE', 'coin', 5)
+    #     except Exception, e:
+    #         self.fail("Unexpected error: %s" % e)
+    #
+    #     self.assertEqual(data['metal'], 'testinium')
+    #     self.assertEqual(data['mint'], 'testStream.py')
+
 #         # subscribe to the id with the original keys
 #         headers, data = prepare_mrest_message('GET', data="", pubhash=pubhash, privkey=privkey, headers=None, permissions=['authenticate'])
 #         packedmess = encode_compact_signed_message('GET', data, headers, 'coin', itemid=coin['id'])
@@ -280,7 +330,7 @@ class MessageLeak(unittest.TestCase):
         # subscribe to a specific coin id
         msg = bitjws.sign_serialize(privkey, method='GET', data='',
                                     pubhash=pubhash, headers=None, model='coin',
-                                    permissions=['authenticate'])
+                                    permissions=['authenticate'], id=1337)
 
         client.send(msg)
 
@@ -289,7 +339,7 @@ class MessageLeak(unittest.TestCase):
         msg = bitjws.sign_serialize(privkey, method='RESPONSE',
                                     metal=mdata['metal'], mint=mdata['mint'],
                                     pubhash=pubhash, headers={}, model='coin',
-                                    permissions=['authenticate'])
+                                    permissions=['authenticate'], id=1338)
 
         pika_channel.basic_publish(body=msg,
                                   exchange=pikaconfig.EXCHANGE['exchange'],
