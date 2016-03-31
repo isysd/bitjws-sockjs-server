@@ -1,9 +1,6 @@
 hashlib
 onetimepass
 
-# external repos
-git+https://github.com/g-p-g/python-ecdsa/
-
 # messaging
 pika
 

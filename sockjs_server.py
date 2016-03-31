@@ -11,7 +11,6 @@ from functools import partial
 from util import setupLogHandlers
 
 import bitjws
-import ecdsa
 import onetimepass
 from tornado import web, ioloop
 from sockjs.tornado import SockJSRouter, SockJSConnection
