@@ -42,8 +42,8 @@ class Connection(SockJSConnection):
         self.logger.info('%s @ %s' % (str(msg), received_at))
         # Check if the message received has at least the required fields.
         try:
-            payload = bitjws.validate_deserialize(msg)[1]
-            if 'method' not in payload:
+            payload_data = bitjws.validate_deserialize(msg)[1]['data']
+            if 'method' not in payload_data:
                 self.logger.info("method not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # method is required
                 return
@@ -51,10 +51,10 @@ class Connection(SockJSConnection):
             self.logger.exception(e)
             self.send(ERR_INVALID_DATA)
             return
-        self.logger.info(payload)
+        self.logger.info(payload_data)
         # Handle the incoming message based on the method specified.
-        if payload['method'] == 'GET':
-            if 'model' not in payload:
+        if payload_data['method'] == 'GET':
+            if 'model' not in payload_data:
                 self.logger.info("model not in payload data")
                 self.send(ERR_UNKNOWN_MSG)  # model is required
                 return
@@ -64,17 +64,17 @@ class Connection(SockJSConnection):
                 self.logger.info("authentication failed")
                 self.send(ERR_AUTH_FAILED)
                 return
-            if 'id' in payload:
-                lname = "%s_id_%s" % (payload['model'], payload['id'])
+            if 'id' in payload_data:
+                lname = "%s_id_%s" % (payload_data['model'], payload_data['id'])
             else:
-                lname = payload['model']
+                lname = payload_data['model']
             self.logger.info('adding listener to %s' % lname)
             self.consumer.listener_add(self, [lname])
-        elif payload['method'] == 'ping':
-            self._handle_ping(payload, received_at)
+        elif payload_data['method'] == 'ping':
+            self._handle_ping(payload_data, received_at)
         else:
             self.logger.info('unknown message: "%s" @ %s' % (
-                payload['method'], received_at))
+                payload_data['method'], received_at))
             self.send(ERR_UNKNOWN_MSG)
 
     def on_open(self, info):

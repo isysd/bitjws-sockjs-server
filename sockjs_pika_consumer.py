@@ -354,15 +354,14 @@ class AsyncConsumer(object):
             self._log.debug('Received direct message: %r' % body)
 
         try:
-            payload = bitjws.validate_deserialize(body)[1]
+            payload_data = bitjws.validate_deserialize(body)[1]['data']
         except Exception, e:
             self._log.exception(e)
             return
         self._log.info(self._listener)
         for listener, allowed in self._listener.iteritems():
             self._log.info('iterating _listeners\t %s: %s' % (listener, allowed))
-            if payload['model'] in allowed or ('id' in payload and
-                    "%s_id_%s" % (payload['model'], payload['id']) in allowed):
+            if payload_data['model'] in allowed or ('id' in payload_data and "%s_id_%s" % (payload_data['model'], payload_data['id']) in allowed):
                 self._log.info('sending body\t %s' % body)
                 listener.send(body)
 
@@ -381,28 +380,28 @@ class AsyncConsumer(object):
         """Incomplete/Naive bitjws auth (being developed)"""
         self._log.info("allowed: %s" % data)
         try:
-            headers, payload = bitjws.validate_deserialize(data)
+            payload_data = bitjws.validate_deserialize(data)[1]['data']
         except Exception as e:
             print e
             try:
-                headers, payload = bitjws.multisig_validate_deserialize(data)
+                headers, payload_data = bitjws.multisig_validate_deserialize(data)
             except Exception as e:
                 print e
                 self._log.info("allowed auth err %s" % e)
                 return False
-        if payload['model'] not in self.schemas:
+        if payload_data['model'] not in self.schemas:
             return False
-        elif 'id' in payload:
-            if not 'GET' in self.schemas[payload['model']]['routes']['/:id']:
+        elif 'id' in payload_data:
+            if not 'GET' in self.schemas[payload_data['model']]['routes']['/:id']:
                 return False
-            permissions = self.schemas[payload['model']]['routes']['/:id']['GET']
+            permissions = self.schemas[payload_data['model']]['routes']['/:id']['GET']
         else:
-            if not 'GET' in self.schemas[payload['model']]['routes']['/']:
+            if not 'GET' in self.schemas[payload_data['model']]['routes']['/']:
                 return False
-            permissions = self.schemas[payload['model']]['routes']['/']['GET']
+            permissions = self.schemas[payload_data['model']]['routes']['/']['GET']
         self._log.info("allowed permissions: %s" % permissions)
         if 'pubhash' in permissions:
-            if 'pubhash' not in payload:
+            if 'pubhash' not in payload_data:
                 return False
         return True
         # TODO check if user is authorized for item
