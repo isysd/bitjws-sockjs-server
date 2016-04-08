@@ -7,10 +7,8 @@ import sqlalchemy as sa
 import sqlalchemy.orm as orm
 from pika import adapters
 from collections import defaultdict
-from flask_mrest.models import UserSA
-from mrest_core.auth.message import verify_message
-from mrest_server.auth import AuthServerMixin
 from util import setupLogHandlers
+import bitjws
 
 import pikaconfig
 
@@ -46,7 +44,7 @@ class AsyncConsumer(object):
         self._listener = defaultdict(set)
         self._ioloop_instance = ioloop_instance
 
-        self.mrest = AuthServerMixin(config)
+        self.schemas = config.SCHEMAS
 
         logger = logging.getLogger(name='api-stream_consumer')
         for h in setupLogHandlers(fname='API-stream_consumer.log'):
@@ -356,15 +354,14 @@ class AsyncConsumer(object):
             self._log.debug('Received direct message: %r' % body)
 
         try:
-            msg = json.loads(body)
+            payload_data = bitjws.validate_deserialize(body)[1]['data']
         except Exception, e:
             self._log.exception(e)
             return
         self._log.info(self._listener)
         for listener, allowed in self._listener.iteritems():
             self._log.info('iterating _listeners\t %s: %s' % (listener, allowed))
-            if msg['model'] in allowed or ('id' in msg and 
-                    "%s_id_%s" % (msg['model'], msg['id']) in allowed):
+            if payload_data['model'] in allowed or ('id' in payload_data and "%s_id_%s" % (payload_data['model'], payload_data['id']) in allowed):
                 self._log.info('sending body\t %s' % body)
                 listener.send(body)
 
@@ -380,38 +377,35 @@ class AsyncConsumer(object):
         self._listener[instance].difference_update(disallowed or [])
 
     def listener_allowed(self, instance, data):
+        """Incomplete/Naive bitjws auth (being developed)"""
         self._log.info("allowed: %s" % data)
-        if data['model'] not in self.mrest.schemas:
+        try:
+            payload_data = bitjws.validate_deserialize(data)[1]['data']
+        except Exception as e:
+            print e
+            try:
+                headers, payload_data = bitjws.multisig_validate_deserialize(data)
+            except Exception as e:
+                print e
+                self._log.info("allowed auth err %s" % e)
+                return False
+        if payload_data['model'] not in self.schemas:
             return False
-        elif 'id' in data:
-            if not 'GET' in self.mrest.schemas[data['model']]['routes']['/:id']:
+        elif 'id' in payload_data:
+            if not 'GET' in self.schemas[payload_data['model']]['routes']['/:id']:
                 return False
-            permissions = self.mrest.schemas[data['model']]['routes']['/:id']['GET']
+            permissions = self.schemas[payload_data['model']]['routes']['/:id']['GET']
         else:
-            if not 'GET' in self.mrest.schemas[data['model']]['routes']['/']:
+            if not 'GET' in self.schemas[payload_data['model']]['routes']['/']:
                 return False
-            permissions = self.mrest.schemas[data['model']]['routes']['/']['GET']
+            permissions = self.schemas[payload_data['model']]['routes']['/']['GET']
         self._log.info("allowed permissions: %s" % permissions)
         if 'pubhash' in permissions:
-            if 'headers' not in data or 'x-mrest-pubhash-0' not in data['headers']:
+            if 'pubhash' not in payload_data:
                 return False
-        elif 'authenticate' in permissions:
-            if 'headers' not in data or 'x-mrest-sign-0' not in data['headers'] or \
-                    'x-mrest-time-0' not in data['headers'] or \
-                    'x-mrest-pubhash-0' not in data['headers']:
-                return False
-            else:
-                self._log.info("allowed auth")
-                # TODO check if user is authorized for item
-                #item = self.sa['session'].query(self.sa_model).all()
-                senderlist = [data['headers']['x-mrest-pubhash-0']]
-                try:
-                    verify_message(data['data'], data['headers'], senderlist, signers=senderlist, method=data['method'])
-                except Exception as e:
-                    print e
-                    self._log.info("allowed auth err %s" % e)
-                    return False
         return True
+        # TODO check if user is authorized for item
+        #item = self.sa['session'].query(self.sa_model).all()
 
     def listener_delete(self, instance):
         self._listener.pop(instance, None)

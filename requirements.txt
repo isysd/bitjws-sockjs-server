@@ -1,9 +1,6 @@
 hashlib
 onetimepass
 
-# external repos
-git+https://github.com/g-p-g/python-ecdsa/
-
 # messaging
 pika
 
@@ -15,6 +12,5 @@ gevent-websocket==0.3.6
 sockjs-tornado
 websocket-client==0.11.0
 
-# mrest
-mrest-core
-mrest-server
+#bitjws
+bitjws
