@@ -1,17 +1,10 @@
-import os
-import sys
 import json
-import hmac
 import time
-import base64
 import logging
-import hashlib
-from binascii import hexlify
-from functools import partial
 from util import setupLogHandlers
 
+
 import bitjws
-import onetimepass
 from tornado import web, ioloop
 from sockjs.tornado import SockJSRouter, SockJSConnection
 from sockjs_pika_consumer import AsyncConsumer

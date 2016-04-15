@@ -1,10 +1,5 @@
-import os
-import sys
-import json
 import logging
 import pika
-import sqlalchemy as sa
-import sqlalchemy.orm as orm
 from pika import adapters
 from collections import defaultdict
 from util import setupLogHandlers
