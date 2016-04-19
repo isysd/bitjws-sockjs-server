@@ -1,6 +1,3 @@
-hashlib
-onetimepass
-
 # messaging
 pika
 
@@ -8,9 +5,8 @@ pika
 tornado==3.2
 
 # websockets
-gevent-websocket==0.3.6
 sockjs-tornado
 websocket-client==0.11.0
 
-#bitjws
+# bitjws
 bitjws
