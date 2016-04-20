@@ -1,12 +1,16 @@
 # messaging
-pika
+pika==0.10.0
 
 # web
 tornado==3.2
 
 # websockets
-sockjs-tornado
+sockjs-tornado==1.0.3
 websocket-client==0.11.0
 
 # bitjws
-bitjws
+bitjws==0.6.3.1
+
+# local database
+SQLAlchemy==1.0.12
+sqlalchemy-login-models==0.0.5

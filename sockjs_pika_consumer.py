@@ -4,6 +4,9 @@ from pika import adapters
 from collections import defaultdict
 from util import setupLogHandlers
 import bitjws
+import sqlalchemy as sa
+from sqlalchemy_login_models.model import User, UserKey
+from model import Coin
 
 import pikaconfig
 
@@ -11,6 +14,13 @@ import pikaconfig
 # Messages accepted by this consumer.
 KNOWN_MESSAGE_TYPE = set(['sockjsmq', 'auth'])
 KNOWN_MESSAGE_FRONT_TYPE = set(['sockjsmq', 'auth', 'pong'])
+
+# Setup database
+engine = sa.create_engine(pikaconfig.SA_ENGINE_URI)
+session = orm.sessionmaker(bind=engine)()
+User.metadata.create_all(engine)
+UserKey.metadata.create_all(engine)
+Coin.metadata.create_all(engine)
 
 
 class AsyncConsumer(object):
