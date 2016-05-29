@@ -1,3 +1,4 @@
+import os
 import urllib
 
 LOG_DIR = "./"

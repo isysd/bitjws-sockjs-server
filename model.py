@@ -1,8 +1,14 @@
 import sqlalchemy as sa
 import sqlalchemy.orm as orm
-from sqlalchemy_login_models.model import Base
+from sqlalchemy_login_models.model import Base, User, UserKey as ParentUserKey
 
-__all__ = ['Coin']
+__all__ = ['User', 'UserKey', 'Coin']
+
+
+class UserKey(ParentUserKey):
+    """A User's API key extended with a get_owner function."""
+    def get_owner(self):
+        return self.user_id
 
 
 class Coin(Base):
@@ -24,3 +30,6 @@ class Coin(Base):
         self.metal = metal
         self.mint = mint
         self.user_id = uid
+
+    def get_owner(self):
+        return self.user_id
