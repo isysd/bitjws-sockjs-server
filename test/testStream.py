@@ -3,11 +3,11 @@ import sys
 import json
 import time
 import unittest
+
 import websocket
 import bitjws
 from bravado_bitjws.client import BitJWSSwaggerClient
 import pika
-
 
 # Prepend the parent directory to the sys path.
 CLIENT_DIR = ".."
@@ -24,9 +24,11 @@ pubhash = bitjws.pubkey_to_addr(privkey.pubkey.serialize())
 url = 'http://0.0.0.0:8002/'
 specurl = '%sstatic/swagger.json' % url
 
+# Tries eo set up bitjws client
 try:
     bitjws_client = BitJWSSwaggerClient.from_url(specurl,
-                                                 privkey=privkey, aud='/response')
+                                                 privkey=privkey,
+                                                 aud='/response')
     username = str(pubhash)[0:8]
     luser = bitjws_client.get_model('User')(username=username)
     user = bitjws_client.user.addUser(user=luser).result()
@@ -35,6 +37,7 @@ except:
     print "Could not connet to BitJWS server... Continuing without it."
     pass
 
+# Sets up pika for rabbitmq interaction
 pika_url_parameters = pika.URLParameters(pikaconfig.BROKER_URL)
 pika_client = pika.BlockingConnection(pika_url_parameters)
 pika_channel = pika_client.channel()
@@ -42,10 +45,10 @@ pika_channel.exchange_declare(**pikaconfig.EXCHANGE)
 
 
 def client_wait_for(client, method, model=None, n=20):
-    # Assume one of the next n messages will be the
-    # one with the desired type on it.
-    # print method
-    # print model
+    """
+    Waits for `n` messages expecting one with method `method` and
+    returns its payload if found.
+    """
     while n:
         n -= 1
         msg = client.recv()
@@ -77,6 +80,10 @@ class CommonTestMixin(object):
 
 
 class GoodClient(unittest.TestCase, CommonTestMixin):
+    """
+    This test case tests how this server handles expected messages from
+    a good client.
+    """
 
     def setUp(self):
         super(GoodClient, self).setup()
@@ -191,6 +198,10 @@ class GoodClient(unittest.TestCase, CommonTestMixin):
 
 
 class BadClient(unittest.TestCase, CommonTestMixin):
+    """
+    This test case tests how this server handles unexpected messages from
+    a bad client.
+    """
 
     def setUp(self):
         super(BadClient, self).setup()
@@ -244,12 +255,11 @@ class BadClient(unittest.TestCase, CommonTestMixin):
                     'permissions': ['authenticate'],
                     'model': 'coin'}
 
-        # same data but different privkey
-        bitjws_msg = bitjws.sign_serialize(privkey,
-                                           data=msg_data)
+        # same data but different `privkey`s
+        bitjws_msg = bitjws.sign_serialize(privkey, data=msg_data)
         bitjws_msg2 = bitjws.sign_serialize(privkey2, data=msg_data)
 
-        # switches signature
+        # shifts signatures
         signature2 = bitjws_msg2.split('.')[2]
         bad_signed_msg = '.'.join(bitjws_msg.split('.')[0:2]) + '.' + signature2
 
@@ -330,8 +340,8 @@ class BadClient(unittest.TestCase, CommonTestMixin):
 
 class MessageLeak(unittest.TestCase):
     """
-    This test checks whether unknown messages are leaked to the user.
-    In effect this checks how the consumer handles this situation.
+    This test case checks whether unknown messages are leaked to the user.
+    In effect it checks how the consumer handles this situation.
     """
 
     def test_connect_publish_coin(self):

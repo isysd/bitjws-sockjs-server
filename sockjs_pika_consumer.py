@@ -385,15 +385,12 @@ class AsyncConsumer(object):
         """Incomplete/Naive bitjws auth (being developed)"""
         self._log.info("allowed: %s" % data)
         try:
-            payload_data = bitjws.validate_deserialize(data)[1]['data']
+            header, payload = bitjws.validate_deserialize(data)
+            payload_data = payload['data']
         except Exception as e:
             print e
-            try:
-                headers, payload_data = bitjws.multisig_validate_deserialize(data)
-            except Exception as e:
-                print e
-                self._log.info("allowed auth err %s" % e)
-                return False
+            self._log.info("allowed auth err %s" % e)
+            return False
         if payload_data['model'] not in self.schemas:
             return False
         elif 'id' in payload_data:
