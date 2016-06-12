@@ -7,12 +7,14 @@ __all__ = ['User', 'UserKey', 'Coin']
 
 class UserKey(ParentUserKey):
     """A User's API key extended with a get_owner function."""
+
     def get_owner(self):
         return self.user_id
 
 
 class Coin(Base):
     """A Coin for someone's collection."""
+
     __tablename__ = "coin"
     __name__ = "coin"
 

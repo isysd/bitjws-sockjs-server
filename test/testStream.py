@@ -8,6 +8,8 @@ import websocket
 import bitjws
 from bravado_bitjws.client import BitJWSSwaggerClient
 import pika
+import sqlalchemy as sa
+import sqlalchemy.orm as orm
 
 # Prepend the parent directory to the sys path.
 CLIENT_DIR = ".."
@@ -15,6 +17,7 @@ if CLIENT_DIR not in sys.path:
     sys.path.insert(0, CLIENT_DIR)
 
 import pikaconfig
+from model import User, UserKey, Coin
 
 TEST_URL = os.environ.get('WSOCK_URL', 'ws://localhost:8123/websocket')
 
@@ -24,7 +27,7 @@ pubhash = bitjws.pubkey_to_addr(privkey.pubkey.serialize())
 url = 'http://0.0.0.0:8002/'
 specurl = '%sstatic/swagger.json' % url
 
-# Tries eo set up bitjws client
+# Tries to set up bitjws client
 try:
     bitjws_client = BitJWSSwaggerClient.from_url(specurl,
                                                  privkey=privkey,
@@ -34,7 +37,7 @@ try:
     user = bitjws_client.user.addUser(user=luser).result()
 except:
     bitjws_client = None
-    print "Could not connet to BitJWS server... Continuing without it."
+    print "Could not connect to BitJWS server... Continuing without it."
     pass
 
 # Sets up pika for rabbitmq interaction
@@ -42,6 +45,10 @@ pika_url_parameters = pika.URLParameters(pikaconfig.BROKER_URL)
 pika_client = pika.BlockingConnection(pika_url_parameters)
 pika_channel = pika_client.channel()
 pika_channel.exchange_declare(**pikaconfig.EXCHANGE)
+
+# Sets up test database session
+engine = sa.create_engine(pikaconfig.SA_ENGINE_URI)
+session = orm.sessionmaker(bind=engine)()
 
 
 def client_wait_for(client, method, model=None, n=20):
